@@ -1,0 +1,6 @@
+*.o
+lib*.a
+TAGS
+dep/
+test/test
+test/test.cc
