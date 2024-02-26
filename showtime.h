@@ -21,6 +21,9 @@ namespace showtime {
 
     /* f(x) = kx + m
      * A linear function of time.
+     *
+     * It's a bit unsatisfactory that the speed is floating-point,
+     * because of the floating-point errors.
      */
     template <class Clock>
     class Linear {
@@ -34,9 +37,15 @@ namespace showtime {
 
 	time_point operator() (time_point x) const {
 	    double t = x.time_since_epoch().count();
-	    ddur dt(k*t);
+	    ddur dt {k*t};
 	    duration tt = std::chrono::duration_cast<duration>(dt + m);
 	    return time_point {tt};
+	}
+
+	duration operator() (duration dt) const {
+	    double t = dt.count();
+	    ddur tt {k*t};
+	    return std::chrono::duration_cast<duration>(tt);
 	}
 
     private:
@@ -61,12 +70,12 @@ namespace showtime {
      * jump the clock you can find out which timers elapsed during the
      * jump.
      *
-     * 	 Most of the interface is independent of the movements
-     * 	 of the reference clock, to ease testing.
-     *
-     * Meets the 'Clock' requirements, although only a fraction of
-     * the features belong there:
+     * Does not meet the 'Clock' requirements, since there's no now():
      * https://en.cppreference.com/w/cpp/named_req/Clock
+     *
+     * In fact, it doesn't interact with any OS-level clock, or timer
+     * system for that matter. You have to add that on top of this
+     * class.
      */
     class Clock {
     public:
@@ -76,14 +85,13 @@ namespace showtime {
 	using period = ref::period;
 	using duration = ref::duration;
 	using time_point = ref::time_point;
-	static bool is_steady() { return false; }
 
 	Clock();
 	Clock(const Clock&) = delete;
 	Clock& operator= (const Clock&) = delete;
 
 	/**
-	 * ...
+	 * See set(t).
 	 */
 	struct Ramifications {
 	    std::vector<Timer*> elapsed;
@@ -94,19 +102,24 @@ namespace showtime {
 	Ramifications set(time_point t);
 
 	time_point at(ref::time_point ref) const;
-	time_point now() const;
 
-	void add(time_point t, Timer*);
-	void remove(Timer*);
+	ref::duration add(time_point t, Timer* tm);
+	void remove(Timer* tm);
 
     private:
 	Linear<Clock> f;
 	std::map<time_point, Timer*> timers;
     };
 
+    /**
+     * A Timer base class. Supports optional repetition, and
+     * cancellation. Not to be copied: the address is its identity.
+     */
     class Timer {
     public:
-	explicit Timer(Clock::duration dt, bool repeat = false) : dt{dt}, repeat{repeat} {}
+	Timer(Clock::duration dt, bool repeat = false) : dt{dt}, repeat{repeat} {}
+	virtual ~Timer() = default;
+	Timer(const Timer&) = delete;
 
 	const Clock::duration dt;
 	const bool repeat;

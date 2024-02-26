@@ -40,8 +40,8 @@ namespace {
 	struct tm hhmm;
 	strptime(s, "%R", &hhmm);
 	auto tm = ymd;
-	tm.tm_hour = ymd.tm_hour;
-	tm.tm_min = ymd.tm_min;
+	tm.tm_hour = hhmm.tm_hour;
+	tm.tm_min = hhmm.tm_min;
 	const time_t t = mktime(&tm);
 	return showtime::Clock::ref::from_time_t(t);
     }
@@ -72,7 +72,7 @@ namespace {
 				      {&timers.C, 'C'},
 				      {&timers.D, 'D'}};
 	std::string s;
-	for (const auto& tm : res.elapsed) { s.push_back(names.at(tm)); }
+	for (const auto& tm : res.elapsed) { if (!tm->cancelled) s.push_back(names.at(tm)); }
 	orchis::assert_eq(s, elapsed);
 	orchis::assert_eq(res.snooze.count(), snooze.count());
     }

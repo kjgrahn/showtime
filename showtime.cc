@@ -37,7 +37,8 @@ namespace {
     {
 	std::vector<Timer*> acc;
 	while (a!=b) {
-	    acc.push_back(a->second);
+	    Timer* const tm = a->second;
+	    if (!tm->cancelled) acc.push_back(tm);
 	    a++;
 	}
 	return acc;
@@ -51,24 +52,24 @@ namespace {
  * (in reference time) until the next timer ought to strike.
  *
  * - The elapsed set is sorted by time.
- * - Cancelled timers are absent.
+ * - Cancelled timers are absent (but more might be cancelled as a side
+ *   effect of processing the set)
  * - Removed timers are (of course) absent.
  * - Repeating timers may be present multiple times. A once-a-day timer
  *   will be listed ~365 times if time moves forward a year.
  * - Moving backwards doesn't make any timers elapse. There are no timers
  *   in the past, since timers are consumed by moving forward past them.
  *   There's not even any repeating timers.
- * - If acting on a timer A causes timer B to be cancelled, it's of course
- *   up to the caller to honor this.
  */
 Clock::Ramifications Clock::set(time_point t)
 {
-    const auto it = timers.upper_bound(t);
+    auto it = timers.upper_bound(t);
+    while (it != end(timers) && it->second->cancelled) it++;
 
     Clock::duration snooze = std::chrono::hours{1};
-    if (it != end(timers)) snooze = begin(timers)->first - t;
+    if (it != end(timers)) snooze = it->first - t;
 
-    Ramifications r { elapsed(begin(timers), it), snooze};
+    Ramifications r { elapsed(begin(timers), it), f(snooze)};
     timers.erase(begin(timers), it);
     return r;
 }
@@ -82,14 +83,6 @@ Clock::time_point Clock::at(Clock::ref::time_point ref) const
 }
 
 /**
- * Translating reference time to clock time.
- */
-Clock::time_point Clock::now() const
-{
-    return at(ref::now());
-}
-
-/**
  * Assuming time is now t, add a timer. Timers are expressed in terms
  * of a duration, so a 30 min timer added at 10:00 will elapse at
  * 10:30. Timers can also repeat; if that timer did, it would elapse
@@ -97,12 +90,19 @@ Clock::time_point Clock::now() const
  *
  * The Clock doesn't own these Timers. They can be added multiple
  * times; if you see a reason to do so, please do.
+ *
+ * Returns a "snooze time" just like set(t) does, since the new timer
+ * may elapse before any already scheduled.
  */
-void Clock::add(Clock::time_point t, Timer* tm)
+Clock::ref::duration Clock::add(Clock::time_point t, Timer* tm)
 {
+    t += tm->dt;
     // if t is occupied already, place the timer a tiny bit later
     while (timers.count(t)) t += duration{1};
     timers.emplace(t, tm);
+
+    const auto head = *timers.begin();
+    return f(head.first - t);
 }
 
 /**
