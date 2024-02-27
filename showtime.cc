@@ -19,7 +19,7 @@ Clock::Clock() = default;
  * reference.
  *
  * Also note that neither a nor b has to be (in some sense) current
- * time. They're only a way to form a duration, and "current time" has
+ * time. They're only a way to form an offset, and "current time" has
  * no meaning in this part of the interface.
  */
 void Clock::change(time_point a, time_point b, double v)
@@ -28,9 +28,53 @@ void Clock::change(time_point a, time_point b, double v)
 }
 
 namespace {
+    /* In a map, insert tm at t or as soon as possible after (in case
+     * t is already occupied).
+     */
+    void insert(std::map<Clock::time_point, Timer*>& m,
+		Clock::time_point t,
+		Timer* const tm)
+    {
+	while (m.count(t)) t += Clock::duration{1};
+	m.emplace(t, tm);
+    }
+
+    /* If 'e' is a repeating timer at a certain time, calculate all
+     * later times it will elapse, up to and including the first time
+     * after t, and collect them in a map.
+     */
+    template <class Entry>
+    void explode(std::map<Clock::time_point, Timer*>& m,
+		 const Clock::time_point t,
+		 const Entry& e)
+    {
+	Clock::time_point te = e.first;
+	Timer& tm = *e.second;
+	while (te < t) {
+	    te += tm.dt;
+	    insert(m, te, &tm);
+	}
+    }
+
+    /* Expand any non-cancelled, repeating timers in m before t, up
+     * until past t.
+     */
+    void repeat(std::map<Clock::time_point, Timer*>& m,
+		const Clock::time_point t)
+    {
+	std::map<Clock::time_point, Timer*> acc;
+
+	for (const auto& e : m) {
+	    if (e.first > t) break;
+	    if (e.second->repeat && !e.second->cancelled) {
+		explode(acc, t, e);
+	    }
+	}
+	m.insert(begin(acc), end(acc));
+    }
+
     /* From a range in a map<t, Timer*>, return the timers in order.
      * Skips cancelled timers (although this is probably unnecessary).
-     * Bug: should expand repeating timers.
      */
     template <class It>
     std::vector<Timer*> elapsed(It a, It b)
@@ -57,12 +101,15 @@ namespace {
  * - Removed timers are (of course) absent.
  * - Repeating timers may be present multiple times. A once-a-day timer
  *   will be listed ~365 times if time moves forward a year.
+ *   Unclear if this makes sense in practice!
  * - Moving backwards doesn't make any timers elapse. There are no timers
  *   in the past, since timers are consumed by moving forward past them.
  *   There's not even any repeating timers.
  */
 Clock::Ramifications Clock::set(time_point t)
 {
+    repeat(timers, t);
+
     auto it = timers.upper_bound(t);
     while (it != end(timers) && it->second->cancelled) it++;
 
@@ -97,9 +144,7 @@ Clock::time_point Clock::at(Clock::ref::time_point ref) const
 Clock::ref::duration Clock::add(Clock::time_point t, Timer* tm)
 {
     t += tm->dt;
-    // if t is occupied already, place the timer a tiny bit later
-    while (timers.count(t)) t += duration{1};
-    timers.emplace(t, tm);
+    insert(timers, t, tm);
 
     const auto head = *timers.begin();
     return f(head.first - t);
